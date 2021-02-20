@@ -4,15 +4,12 @@ import os
 import sys
 import datetime
 import threading
-from threading import Timer
 import csv
 import re
 
 
-from PyQt5.QtWidgets import QFileDialog
 from PyQt5 import QtWidgets
 from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import QSize, QTimer, QTime
 import asyncio
 import aiohttp
 import requests
@@ -20,13 +17,6 @@ from bs4 import BeautifulSoup
 
 
 from ui import Ui_Dialog
-#from utils import *
-
-
-
-
-
-products_data = []
 
 
 class WildParser(QtWidgets.QMainWindow):
@@ -35,6 +25,7 @@ class WildParser(QtWidgets.QMainWindow):
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
         self.init_UI()
+        self.products_data = []
 
     def init_UI(self):
         self.setWindowIcon(QIcon('mail.png'))
@@ -49,18 +40,25 @@ class WildParser(QtWidgets.QMainWindow):
 
 
     def normalize_url(self, url):
-        if '?xsubject=94' in url:
+        if '?xsubject' in url:
+            print('1:', url)
             return url
-
-        elif '?' in url:
-            return '-'.join(url.split('?')[:-1])
+        elif '&bid' and '?sort' in url:
+            print('2:', url)
+            print('-'.join(url.split('?sort')[:-1]))
+            return '-'.join(url.split('?sort')[:-1])
+        elif '?sort' in url:
+            print('3:', url)
+            return '-'.join(url.split('?sort')[:-1])
         else:
+            print('4:', url)
             return url
 
-    async def fetch_content(self, url, session):
+
+    async def fetch_content(self, url, session, options):
         async with session.get(url) as respone:
             product_html = await respone.text()
-            await self.parse_selected_product_data(product_html)
+            await self.parse_selected_product_data(product_html, options)
 
 
     def get_selected_option_from_check_box(self):
@@ -74,10 +72,11 @@ class WildParser(QtWidgets.QMainWindow):
                                 'parse_link': self.ui.url_to_product.isChecked()
                                 }
 
-        print(selected_option_list)
+        
         return selected_option_list
 
-    async def parser(self, main_url, stop):
+    async def parser(self, main_url, stop, options):
+
         url = self.normalize_url(main_url)  # приводим ссылку к нормальному виду
         total_page = self.get_total_page(url)  # считаем кол-во страниц
         all_product_link = self.parse_all_product_link(url, total_page)  #  спарсили все ссылки на товары
@@ -86,7 +85,7 @@ class WildParser(QtWidgets.QMainWindow):
             for url in all_product_link:
                 if stop():
                     break
-                task = asyncio.create_task(self.fetch_content(url, session))
+                task = asyncio.create_task(self.fetch_content(url, session, options))
                 tasks.append(task)
             await asyncio.gather(*tasks)
 
@@ -96,6 +95,11 @@ class WildParser(QtWidgets.QMainWindow):
         """
         self.ui.work_text_status.setText("<font color='blue'>Считаем кол-во страниц</font>")
         s = requests.Session()
+        #if '?xsubject' in url:
+           # url =
+
+        #elif '?' in url:
+            #return '-'.join(url.split('?')[:-1])
         get_page = s.get(url + '?page=1')
         page_count = 0
         if 'pagination-next' in get_page.text:
@@ -141,79 +145,94 @@ class WildParser(QtWidgets.QMainWindow):
 
             return products_link
 
-    async def parse_selected_product_data(self, product_url):
+    async def parse_selected_product_data(self, product_url, options):
         self.ui.work_text_status.setText("<font color='blue'>Собираем детальную информацию о товарах</font>")
         """
         Функция скрапинга информации о товаре
         Переходим по ссылке - парсим данные - записываем в cловарь
         """
-
         soup = BeautifulSoup(product_url, 'lxml')
         product_detailt_page = soup.find_all('div', {'class': 'product-content-v1'})
-
+        data = {}
         for child in product_detailt_page:
-            try:
-                full_name = child.find(class_='brand-and-name').get_text().strip().encode('ascii', 'ignore').decode(
-                    encoding="utf-8")
-            except AttributeError:
-                full_name = ''
-            try:
-                brand = child.find(class_='brand').get_text().strip().encode('ascii', 'ignore').decode(encoding="utf-8")
-            except AttributeError:
-                brand = ''
-            try:
-                current_price = child.find(class_='final-cost').get_text().strip().encode('ascii', 'ignore').decode(
-                    encoding="utf-8")
-            except AttributeError:
-                current_price = ''
-            try:
-                default_price = child.find(class_='c-text-base').get_text().strip().encode('ascii', 'ignore').decode(
-                    encoding="utf-8")
-            except AttributeError:
-                default_price = ''
+            if options['parse_full_name']:
+                try:
+                    full_name = child.find(class_='brand-and-name').get_text().strip().encode('ascii', 'ignore').decode(
+                        encoding="utf-8")
+                    data['full_name'] = full_name
+                except AttributeError:
+                    data['full_name'] = ''
+            if options['parse_brand']:
+                try:
+                    brand = child.find(class_='brand').get_text().strip().encode('ascii', 'ignore').decode(encoding="utf-8")
+                    data['brand'] =  brand
+                except AttributeError:
+                    data['brand'] =  ''
+            if options['parse_current_price']:
+                try:
+                    current_price = child.find(class_='final-cost').get_text().strip().encode('ascii', 'ignore').decode(
+                        encoding="utf-8")
+                    data['current_price'] = current_price
+                except AttributeError:
+                    data['current_price'] = ''
 
-            try:
-                articul = child.find(class_='article').get_text().strip().encode('ascii', 'ignore').decode(
-                    encoding="utf-8")
-            except AttributeError:
-                articul = ''
+            if options['parse_default_price']:
+                try:
+                    default_price = child.find(class_='c-text-base').get_text().strip().encode('ascii', 'ignore').decode(
+                        encoding="utf-8")
+                    data['default_price'] = default_price
+                except AttributeError:
+                    data['default_price'] = ''
 
-            try:
-                rating = child.find(class_='stars-line-lg').get_text().strip().encode('ascii', 'ignore').decode(
-                    encoding="utf-8")
-            except AttributeError:
-                rating = ''
+            if options['parse_articul']: 
+                try:
+                    articul = child.find(class_='article').get_text().strip().encode('ascii', 'ignore').decode(
+                        encoding="utf-8")
+                    data['articul'] = articul
+                except AttributeError:
+                    data['articul'] = ''
 
-            data = {'full_name': full_name, 'brand': brand, 'current_price': current_price,
-                    'default_price': default_price
-                    }  # 'url': base_url + product_url
-            products_data.append(data)
+            if options['parse_rating']: 
+                try:
+                    rating = child.find(class_='stars-line-lg').get_text().strip().encode('ascii', 'ignore').decode(
+                        encoding="utf-8")
+                    data['rating'] = rating
+                except AttributeError:
+                    data['rating'] = ''
+
+            self.products_data.append(data)
             #  update GUI data
             total_product = self.ui.total_product_parsed.text()
             total_product = int(total_product)
             total_product += 1
             self.ui.total_product_parsed.setText(str(total_product))
-            print(data)
+            #print(data)
+
 
     def clear_string(self, string):  # В основном только для того, что удать знак "рубль" из строки "цена"
         return re.sub(r'\D', '', string)
 
     def write_csv(self, data):
         with open('result.csv', 'a') as f:
-            fields = ['full_name', 'brand', 'current_price', 'default_price']  # , 'url'
+            fields = []
+            selected_only_first_field_name = data[0]
+            for i in selected_only_first_field_name:
+                fields.append(i)
+
             writer = csv.DictWriter(f, fieldnames=fields)
             for product in data:
                 writer.writerow(product)
 
 
     def main(self, stop):
+        options = self.get_selected_option_from_check_box()
         start = datetime.datetime.now().replace(microsecond=0)
         self.ui.work_text_status.setText("<font color='green'>Получаем информацию о товарах</font>")
-        asyncio.run(self.parser(self.ui.url_to_parse.text(), stop))
+        asyncio.run(self.parser(self.ui.url_to_parse.text(), stop, options))
         end = datetime.datetime.now().replace(microsecond=0)
         self.ui.work_text_status.setText(f"<font color='green'>Завершили!</span> времени ушло: {end - start}")
         #self.ui.stop_parse.hide()
-        self.write_csv(products_data)
+        self.write_csv(self.products_data)
 
         #self.ui.saving_info.setText("<font color='blue'>Сохранили файл в папку с программой</font>")
         #self.ui.start_parse.show()
